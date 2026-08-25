@@ -9,7 +9,7 @@ def extract_functions(file_path):
     and line range.
     """
     file_path = Path(file_path)
-    source = file_path.read_text()
+    source = file_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
     functions = []

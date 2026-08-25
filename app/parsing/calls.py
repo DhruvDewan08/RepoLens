@@ -40,7 +40,7 @@ def _extract_calls_from_function(func_node, qualified_name):
 
 def extract_calls(file_path): #classes first then top level functions 
     file_path =Path(file_path)
-    source = file_path.read_text()
+    source = file_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
     calls= []
