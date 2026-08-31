@@ -44,6 +44,7 @@ def main (repository_id: int):
                 qualified_name=f["qualified_name"],
                 start_line=f["start_line"],
                 end_line=f["end_line"],
+                docstring=f["docstring"],
             )
             db.add(func_row)
             qualified_name_to_function[f["qualified_name"]] = func_row

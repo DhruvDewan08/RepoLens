@@ -9,22 +9,22 @@ from app.ingestion.walk import walk_python_files
 
 
 def normalize_github_url(url: str) -> str:
-    url = url.strip().rstrip("/")
+    url = url.strip().rstrip("/") #strips whitespace and trailing slashes
     if url.endswith(".git"):
         url = url[: -len(".git")]
     return url
 
 
-def repo_name_from_url(url: str) -> str:
+def repo_name_from_url(url: str) -> str: #extracts the repository name from the URL
     return url.split("/")[-1]
 
 
 def main(url: str, branch: str | None = None) -> None:
     url = normalize_github_url(url)
-    db = SessionLocal()
+    db = SessionLocal() #opens a connection to the postgress , using the engine we set up in the db.session.py file 
     repo = None
     try:
-        repo = db.query(Repository).filter_by(github_url=url).one_or_none()
+        repo = db.query(Repository).filter_by(github_url=url).one_or_none() #check if the repository is already in the database
         if repo is None:
             repo = Repository(
                 name=repo_name_from_url(url),
@@ -38,7 +38,7 @@ def main(url: str, branch: str | None = None) -> None:
             repo.status = "indexing"
             if branch:
                 repo.branch = branch
-            db.query(File).filter_by(repository_id=repo.id).delete()
+            db.query(File).filter_by(repository_id=repo.id).delete() #delete all the files for the repository
         db.commit()
 
         dest = Path("data/repos") / str(repo.id)
@@ -56,7 +56,7 @@ def main(url: str, branch: str | None = None) -> None:
         repo.indexed_at = datetime.now(timezone.utc)
         db.commit()
 
-        print(f"indexed '{repo.name}' (repository_id={repo.id}): {file_count} files")
+        print(f"indexed '{repo.name}' (repository_id={repo.id}): {file_count} files") #print the repository name and the number of files indexed
     except Exception:
         if repo is not None and repo.id is not None:
             repo.status = "failed"
@@ -67,7 +67,7 @@ def main(url: str, branch: str | None = None) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 2: #check if the user has provided the github url and the branch
         print("Usage: python -m app.ingestion.ingest <github_url> [branch]")
         sys.exit(1)
     optional_branch = sys.argv[2] if len(sys.argv) > 2 else None

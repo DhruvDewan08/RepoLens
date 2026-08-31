@@ -3,7 +3,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, relationship
 import datetime
-
+from pgvector.sqlalchemy import Vector
 Base = declarative_base()
 
 
@@ -96,5 +96,5 @@ class Embedding(Base):
     id = Column(Integer, primary_key=True)
     entity_type = Column(String, default="function")
     entity_id = Column(Integer, nullable=False)
-    vector = Column(Text, nullable=True)  # placeholder — becomes pgvector type in Phase 4
+    vector = Column(Vector(384), nullable=True)  # 384 = output dimension of all-MiniLM-L6-v2
     model_name = Column(String, nullable=True)

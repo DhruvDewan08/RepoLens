@@ -24,6 +24,7 @@ def extract_functions(file_path):
                         "qualified_name": f"{class_name}.{child.name}", #the qualified name is the class name plus the function name
                         "start_line": child.lineno,
                         "end_line": child.end_lineno,
+                        "docstring": ast.get_docstring(child), #gets the docstring from the function
                     })
 
     for node in tree.body: #the top level statements of the whole file , not nested inside anything . catches files that live directly in the file and not in any class  
@@ -33,6 +34,7 @@ def extract_functions(file_path):
                 "qualified_name": node.name, #since its top level , the qualified name is the same as the name , no clas prefix needed 
                 "start_line": node.lineno,
                 "end_line": node.end_lineno,
+                "docstring": ast.get_docstring(node), #gets the docstring from the function
             })
 
     return functions
