@@ -4,10 +4,10 @@ RepoLens indexes a Python repository into a **call graph**, an **import graph**,
 
 ### What it can do
 
-- 🔍 Ask questions about a repository using function-level semantic retrieval
-- 🕸️ Explore import and function-call relationships
-- 💥 Run caller/callee impact analysis with BFS
-- 🤖 Generate grounded answers from retrieved functions + graph context
+-  Ask questions about a repository using function-level semantic retrieval
+-  Explore import and function-call relationships
+-  Run caller/callee impact analysis with BFS
+-  Generate grounded answers from retrieved functions + graph context
 
 ![Architecture](docs/screenshots/architecture.png)
 
