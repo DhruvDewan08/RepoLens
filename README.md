@@ -1,26 +1,45 @@
 # RepoLens
 
-**Program-aware code intelligence** — not “chat over file chunks.”
+RepoLens indexes a Python repository into a **call graph**, an **import graph**, and **function-level embeddings**. It answers questions about code from program structure, not from file chunks.
 
-RepoLens indexes a Python repository into a **call graph**, an **import graph**, and **function-level embeddings**. Questions like *what breaks if I change `checkout`?* are answered with a **BFS over real AST-derived edges**, plus an LLM that only sees a curated context packet.
+### What it can do
 
-This is a portfolio project for **backend + static analysis + retrieval**. There is no hosted demo: clone, run locally, and walk the UI. That is the interview demo.
+- 🔍 Ask questions about a repository using function-level semantic retrieval
+- 🕸️ Explore import and function-call relationships
+- 💥 Run caller/callee impact analysis with BFS
+- 🤖 Generate grounded answers from retrieved functions + graph context
 
-![Architecture](docs/screenshots/architecture.svg)
+![Architecture](docs/screenshots/architecture.png)
 
 ---
 
-## Why this exists
+## Demo
 
-Typical repo-QA:
+Capture these from a running session against `tests/fixtures/shop`:
+
+| File | Shows |
+|------|-------|
+| `docs/screenshots/chat.png` | Chat — question, answer, grounding context |
+| `docs/screenshots/impact.png` | Impact analysis — graph and source pane |
+| `docs/screenshots/folders.png` | File graph or function browser |
+
+![Chat](docs/screenshots/chat.png)
+![Impact analysis](docs/screenshots/impact.png)
+![Folder / function explorer](docs/screenshots/folders.png)
+
+---
+
+## How it works
+
+Typical repo-QA tools work like this:
 
 ```text
 files → split into chunks → embed → LLM
 ```
 
-The model sees text. It does not know who calls whom.
+The model sees text. It doesn't know who calls whom.
 
-RepoLens:
+RepoLens builds structure first:
 
 ```text
 GitHub URL or local folder
@@ -32,77 +51,88 @@ GitHub URL or local folder
   → LLM answers from graph + retrieved functions
 ```
 
----
-
-## What an interviewer should notice
-
-- **Six tables:** `Repository` → `File` → `Function`; `Import`; `FunctionCall`; `Embedding` (`Vector(384)`).
-- **Structure, not only meaning:** pgvector cosine search *and* SQL call edges.
-- **CLI first:** the same scripts power Streamlit and FastAPI (`python -m app.scripts.*`).
-- **Honest V1 limits:** `math.ceil`, constructors, and most `obj.method()` stay unresolved. Impact uses **resolved** edges; unresolved names still go into LLM context.
-- **UI built for large repos:** Flask was ingested as a *sample codebase*, not as the app framework. The UI never dumps every function as a button (that froze Graphviz).
+Questions like *what breaks if I change `checkout`?* are answered with a BFS over real AST-derived edges, not a similarity search over text chunks.
 
 ---
 
-## Screenshots (add these before you share the repo)
+## Example: question → retrieval → answer
 
-The architecture diagram above is in the repo. **UI shots must be real captures** of your Streamlit session — interviewers will run the app.
+**Question:** *What breaks if I change `get_total_value`?*
 
-1. Start Postgres and the UI (commands below).
-2. Index `tests/fixtures/shop` (the golden demo).
-3. Windows: `Win + Shift + S` → save as:
+Against `tests/fixtures/shop`:
 
-| Save as | What to capture |
-|---------|-----------------|
-| `docs/screenshots/chat.png` | **Chat** — question + answer + grounding expander |
-| `docs/screenshots/impact.png` | **Impact** — graph **and** source pane (`path:line` + code) |
-| `docs/screenshots/folders.png` | **File graph** (folder map) **or** **Functions** (tree → file → snippet) |
+1. **Router** classifies this as an **impact** query (`break` / `breaks` in `app/query/router.py`).
+2. **Semantic search** finds `get_total_value` (and nearby functions) via pgvector.
+3. **Graph traversal** BFS-walks **callers** (and callees) of the best match: `checkout` → `add_and_checkout`.
+4. **Context packet** is built: function snippets + a neighborhood summary (`app/query/context_builder.py`).
+5. **LLM** explains the blast radius from that packet only — not the whole repo.
 
-Then they render here:
-
-![Chat](docs/screenshots/chat.png)
-
-![Impact analysis](docs/screenshots/impact.png)
-
-![Folder / function explorer](docs/screenshots/folders.png)
-
----
-
-## Stack
-
-| Layer | Choice |
-|--------|--------|
-| Language | Python 3.11 |
-| UI | Streamlit (`streamlit_app.py`) |
-| API | FastAPI (`app/api/main.py`) — thin; CLI is the source of truth |
-| DB | PostgreSQL + **pgvector** (Docker) |
-| ORM | SQLAlchemy |
-| Parse | stdlib `ast` |
-| Embeddings | `sentence-transformers` `all-MiniLM-L6-v2` |
-| LLM | `GROQ_API_KEY` / `OPENAI_API_KEY`, else local **Ollama** |
-| Graphs | Graphviz (install the **system** binary, not only the pip package) |
-
----
-
-## Golden fixture (shop)
-
-`tests/fixtures/shop/` is the graph you can explain on a whiteboard:
+Resolved call graph for the fixture:
 
 ```text
 add_and_checkout
     ├── checkout ──► get_total_value
-    └── add_product ──► Product (constructor; often unresolved in V1)
+    └── add_product ──► Product (constructor; typically unresolved)
 ```
 
-`checkout` also calls `math.ceil` (stdlib — **unresolved**, by design).
-
-After ingest + parse + resolve + embed:
+`checkout` also calls `math.ceil` (unresolved). Changing `get_total_value` therefore affects `checkout` and `add_and_checkout`.
 
 ```bash
 python -m app.scripts.search "checkout" 1
 python -m app.scripts.impact --function-id <id> --direction callers --depth 3
 python -m app.scripts.ask "What breaks if I change get_total_value?" 1
 ```
+
+---
+
+## Architecture
+
+| Layer | Choice |
+|--------|--------|
+| Language | Python 3.11 |
+| UI | Streamlit (`streamlit_app.py`) |
+| API | FastAPI (`app/api/main.py`) |
+| DB | PostgreSQL + **pgvector** (`pgvector/pgvector:pg16`) |
+| ORM | SQLAlchemy |
+| Parse | stdlib `ast` |
+| Embeddings | `sentence-transformers` `all-MiniLM-L6-v2` |
+| LLM | Groq, OpenAI-compatible, or local Ollama |
+| Graphs | Graphviz (system binary, not only the pip package) |
+
+| Step | Module | Writes |
+|------|--------|--------|
+| Ingest | `app.scripts.ingest` / `ingest_local` | `Repository`, `File` |
+| Parse | `app.scripts.parse` | `Function`, `Import`, raw `FunctionCall` |
+| Resolve | `app.graph.resolve_calls` | `callee_function_id` (same-file + `from x import y`) |
+| Embed | `app.scripts.embed` | `Embedding` vectors |
+| Query | `search` / `impact` / `ask` | reads only |
+
+---
+
+## Technical design
+
+- **Six tables:** `Repository` → `File` → `Function`; `Import`; `FunctionCall`; `Embedding` (`Vector(384)`).
+- **Structure and meaning, kept separate:** pgvector cosine search over function embeddings, plus SQL call edges — merged at query time.
+- **CLI-first:** Streamlit and FastAPI call the same scripts (`python -m app.scripts.*`).
+- **Large repos:** Streamlit does not dump every function as a Graphviz node or a button. File graph and function browse are folder- and search-scoped.
+
+### Key engineering decisions
+
+#### AST over text chunking
+
+Functions, imports, and calls are extracted structurally rather than treating source files as arbitrary text.
+
+#### SQL edges over a dedicated graph database
+
+V1 uses PostgreSQL for both relational graph edges and pgvector, avoiding an additional graph database dependency.
+
+#### Graph + semantic retrieval
+
+Embeddings answer conceptual questions; graph traversal answers structural questions such as callers and impact.
+
+#### Best-effort call resolution
+
+Static Python analysis cannot reliably resolve every dynamic call. RepoLens stores unresolved callees (`callee_function_id` null, `callee_name` kept) instead of inventing edges. Same-file and `from x import y` calls resolve; `obj.method()`, constructors, and stdlib names such as `math.ceil` stay unresolved. Impact walks **resolved** edges; unresolved names can still appear in LLM context.
 
 ---
 
@@ -116,6 +146,8 @@ docker compose up -d db
 
 `postgresql://postgres:postgres@localhost:5432/repolens`
 
+Compose mounts `docker/init/01-vector.sql` (`CREATE EXTENSION IF NOT EXISTS vector`) on **first volume init**. `check_db` / `reset_db` run the same statement so an existing volume still gets the extension.
+
 ### 2. Python
 
 ```bash
@@ -124,24 +156,38 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Install [Graphviz](https://graphviz.org/download/) for the Streamlit graphs.
+Install [Graphviz](https://graphviz.org/download/) for Streamlit graphs.
 
-### 3. Secrets (never commit)
+### 3. Environment
 
-Create `.env`:
+Create `.env` (gitignored):
 
 ```env
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/repolens
-GROQ_API_KEY=gsk_...
 ```
 
-If `GROQ_API_KEY` is unset, the client falls back to Ollama.
+LLM selection in `app/query/llm_client.py`:
+
+1. If `GROQ_API_KEY` is set → Groq OpenAI-compatible API. Default model: `llama-3.1-8b-instant` (override with `LLM_MODEL`).
+2. Else if `OPENAI_API_KEY` is set → OpenAI (or `OPENAI_BASE_URL`). Default model: `gpt-4o-mini`.
+3. Else → local Ollama. Default model: `llama3.2`.
+
+Optional:
+
+```env
+GROQ_API_KEY=...
+# OPENAI_API_KEY=...
+# OPENAI_BASE_URL=...
+# LLM_MODEL=...
+```
 
 ### 4. Schema
 
 ```bash
 python -m app.scripts.check_db
 ```
+
+Enables `vector` if needed, then creates the six tables.
 
 ### 5. Index the fixture
 
@@ -160,7 +206,7 @@ Use the printed `repository_id` if it is not `1`.
 streamlit run streamlit_app.py
 ```
 
-Tabs: **Chat** · **Impact** · **File graph** · **Functions**. Sidebar can clone a GitHub URL and run the same pipeline.
+Tabs: **Chat** · **Impact** · **File graph** · **Functions**. The sidebar can clone a GitHub URL and run the same pipeline.
 
 ### 7. Optional API
 
@@ -180,30 +226,7 @@ OpenAPI: `http://127.0.0.1:8000/docs`
 
 ---
 
-## Pipeline
-
-```mermaid
-flowchart LR
-  A[GitHub / local] --> B[Ingest]
-  B --> C[AST parse]
-  C --> D[Resolve calls]
-  D --> E[Embed functions]
-  E --> F[Router]
-  F --> G[LLM]
-  G --> H[Streamlit / FastAPI]
-```
-
-| Step | Module | Writes |
-|------|--------|--------|
-| Ingest | `app.scripts.ingest` / `ingest_local` | `Repository`, `File` |
-| Parse | `app.scripts.parse` | `Function`, `Import`, raw `FunctionCall` |
-| Resolve | `app.graph.resolve_calls` | `callee_function_id` (same-file + `from x import y`) |
-| Embed | `app.scripts.embed` | `Embedding` vectors |
-| Query | `search` / `impact` / `ask` | reads only |
-
----
-
-## Layout
+## Project structure
 
 ```text
 app/
@@ -215,6 +238,7 @@ app/
   api/          FastAPI
   scripts/      CLI
   db/           models + session
+docker/init/    CREATE EXTENSION vector (first Postgres boot)
 tests/fixtures/shop/
 streamlit_app.py
 docker-compose.yaml
@@ -222,14 +246,8 @@ docker-compose.yaml
 
 ---
 
-## What this is not
+## Limitations & V1 scope
 
-- Not a hosted Render/Railway app (keys, GPU RAM, and Ollama do not fit a free dyno well).
-- Not production call-resolution (no interprocedural / type inference).
-- Keys live in `.env` only (`llm_client.py` uses `os.getenv`). Do not paste them into GitHub.
-
----
-
-## Resume one-liner
-
-*Built a program-aware code intelligence tool: AST → call/import graph in Postgres + pgvector, hybrid retrieval, Streamlit + FastAPI, Groq/Ollama.*
+- No hosted demo — run locally (Docker + Python + Groq, OpenAI, or Ollama).
+- Call resolution is same-file and import-based only; no interprocedural or type-aware analysis.
+- API keys live in `.env`, never committed. `llm_client.py` only reads `os.getenv`.
