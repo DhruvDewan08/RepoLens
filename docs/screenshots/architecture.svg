@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">RepoLens architecture</title>
+  <desc id="desc">Clone, AST, graph, embeddings, router, LLM  Streamlit, FastAPI, Postgres.</desc>
+  <rect width="1280" height="640" fill="#FFF7ED"/>
+  <text x="56" y="58" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="36" font-weight="700" fill="#7C2D12">RepoLens</text>
+  <text x="56" y="92" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="16" fill="#9A3412">Program-aware code intelligence  not file-chunk RAG</text>
+  <line x1="56" y1="112" x2="1224" y2="112" stroke="#FDBA74" stroke-width="2"/>
+
+  <!-- pipeline cards -->
+  <g font-family="Segoe UI, Helvetica, Arial, sans-serif">
+    <rect x="40" y="148" width="180" height="150" rx="16" fill="#FFFFFF" stroke="#FDBA74" stroke-width="1.5"/>
+    <rect x="40" y="148" width="8" height="150" rx="4" fill="#C2410C"/>
+    <text x="130" y="208" text-anchor="middle" font-size="18" font-weight="700" fill="#7C2D12">1  Clone</text>
+    <text x="130" y="238" text-anchor="middle" font-size="13" fill="#9A3412">GitHub or local</text>
+
+    <rect x="244" y="148" width="180" height="150" rx="16" fill="#FFFFFF" stroke="#FDBA74" stroke-width="1.5"/>
+    <rect x="244" y="148" width="8" height="150" rx="4" fill="#C2410C"/>
+    <text x="334" y="208" text-anchor="middle" font-size="18" font-weight="700" fill="#7C2D12">2  AST</text>
+    <text x="334" y="238" text-anchor="middle" font-size="13" fill="#9A3412">Functions &amp; imports</text>
+
+    <rect x="448" y="148" width="180" height="150" rx="16" fill="#FFFFFF" stroke="#FDBA74" stroke-width="1.5"/>
+    <rect x="448" y="148" width="8" height="150" rx="4" fill="#C2410C"/>
+    <text x="538" y="208" text-anchor="middle" font-size="18" font-weight="700" fill="#7C2D12">3  Graph</text>
+    <text x="538" y="238" text-anchor="middle" font-size="13" fill="#9A3412">Calls resolved to IDs</text>
+
+    <rect x="652" y="148" width="180" height="150" rx="16" fill="#FFFFFF" stroke="#FDBA74" stroke-width="1.5"/>
+    <rect x="652" y="148" width="8" height="150" rx="4" fill="#C2410C"/>
+    <text x="742" y="208" text-anchor="middle" font-size="18" font-weight="700" fill="#7C2D12">4  Embed</text>
+    <text x="742" y="238" text-anchor="middle" font-size="13" fill="#9A3412">One vector / function</text>
+
+    <rect x="856" y="148" width="180" height="150" rx="16" fill="#FFFFFF" stroke="#FDBA74" stroke-width="1.5"/>
+    <rect x="856" y="148" width="8" height="150" rx="4" fill="#C2410C"/>
+    <text x="946" y="208" text-anchor="middle" font-size="18" font-weight="700" fill="#7C2D12">5  Route</text>
+    <text x="946" y="238" text-anchor="middle" font-size="13" fill="#9A3412">Impact or semantic</text>
+
+    <rect x="1060" y="148" width="180" height="150" rx="16" fill="#FFFFFF" stroke="#FDBA74" stroke-width="1.5"/>
+    <rect x="1060" y="148" width="8" height="150" rx="4" fill="#C2410C"/>
+    <text x="1150" y="208" text-anchor="middle" font-size="18" font-weight="700" fill="#7C2D12">6  Answer</text>
+    <text x="1150" y="238" text-anchor="middle" font-size="13" fill="#9A3412">LLM + context</text>
+
+    <!-- arrows -->
+    <polygon fill="#C2410C" points="228,223 244,223 236,217 236,229"/>
+    <polygon fill="#C2410C" points="432,223 448,223 440,217 440,229"/>
+    <polygon fill="#C2410C" points="636,223 652,223 644,217 644,229"/>
+    <polygon fill="#C2410C" points="840,223 856,223 848,217 848,229"/>
+    <polygon fill="#C2410C" points="1044,223 1060,223 1052,217 1052,229"/>
+  </g>
+
+  <g font-family="Segoe UI, Helvetica, Arial, sans-serif">
+    <rect x="40" y="360" width="380" height="180" rx="18" fill="#FFFFFF" stroke="#EA580C" stroke-width="2"/>
+    <text x="230" y="428" text-anchor="middle" font-size="22" font-weight="700" fill="#C2410C">Streamlit</text>
+    <text x="230" y="462" text-anchor="middle" font-size="15" fill="#9A3412">Explore graph and chat</text>
+
+    <rect x="450" y="360" width="380" height="180" rx="18" fill="#FFFFFF" stroke="#EA580C" stroke-width="2"/>
+    <text x="640" y="428" text-anchor="middle" font-size="22" font-weight="700" fill="#C2410C">FastAPI</text>
+    <text x="640" y="462" text-anchor="middle" font-size="15" fill="#9A3412">Same pipeline over HTTP</text>
+
+    <rect x="860" y="360" width="380" height="180" rx="18" fill="#FFFFFF" stroke="#EA580C" stroke-width="2"/>
+    <text x="1050" y="428" text-anchor="middle" font-size="22" font-weight="700" fill="#C2410C">Postgres + pgvector</text>
+    <text x="1050" y="462" text-anchor="middle" font-size="15" fill="#9A3412">Structure and meaning in one DB</text>
+  </g>
+
+  <text x="56" y="600" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" fill="#C2410C">Call graph first, then retrieval</text>
+</svg>
