@@ -9,6 +9,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "").strip() or None
 LLM_MODEL = os.getenv("LLM_MODEL", "").strip()
 
+# Groq retired llama-3.1-8b-instant (Aug 2026). See console.groq.com/docs/deprecations
+GROQ_DEFAULT_MODEL = "openai/gpt-oss-20b"
+
 
 def _build_prompt(question: str, context: dict) -> str:
     parts = ["You are a code assistant answering questions about a codebase.\n"]
@@ -28,10 +31,19 @@ def _chat_openai_compatible(prompt: str, api_key: str, base_url: str | None, mod
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key, base_url=base_url)
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception as exc:
+        err = str(exc).lower()
+        if "model_not_found" in err or "does not exist" in err:
+            raise RuntimeError(
+                f"LLM model '{model}' is not available on this provider. "
+                f"Set LLM_MODEL in .env (Groq default: {GROQ_DEFAULT_MODEL})."
+            ) from exc
+        raise
     return response.choices[0].message.content or ""
 
 
@@ -43,7 +55,7 @@ def ask_llm(question: str, context: dict) -> str:
             prompt,
             GROQ_API_KEY,
             "https://api.groq.com/openai/v1",
-            LLM_MODEL or "llama-3.1-8b-instant",
+            LLM_MODEL or GROQ_DEFAULT_MODEL,
         )
     if OPENAI_API_KEY:
         return _chat_openai_compatible(

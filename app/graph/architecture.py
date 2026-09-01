@@ -23,6 +23,13 @@ def file_import_edges(repository_id: int) -> list[tuple[str, str]]:
     db = SessionLocal()
     files = db.query(File).filter_by(repository_id=repository_id).all()
     by_stem = {_stem(f.path): f for f in files}
+    by_path_stem: dict[str, File] = {}
+    for f in files:
+        p = _posix(f.path).removesuffix(".py")
+        by_path_stem[p] = f
+        if "/" in p:
+            by_path_stem[p.split("/")[-1]] = f
+
     edges: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
 
@@ -32,8 +39,11 @@ def file_import_edges(repository_id: int) -> list[tuple[str, str]]:
         for imp in imports:
             if not imp.target_module:
                 continue
-            stem = imp.target_module.split(".")[-1]
-            target = by_stem.get(stem)
+            mod = imp.target_module.lstrip(".")
+            target = by_stem.get(mod.split(".")[-1])
+            if target is None and mod:
+                dotted = mod.replace(".", "/")
+                target = by_path_stem.get(dotted) or by_path_stem.get(dotted.split("/")[-1])
             if target is None or target.id == file_row.id:
                 continue
             dest = _posix(target.path)
@@ -52,6 +62,22 @@ def folder_import_edges(repository_id: int, depth: int = 2) -> list[tuple[str, s
         if a != b:
             collapsed.add((a, b))
     return sorted(collapsed)
+
+
+def import_edges_for_display(
+    repository_id: int, depth: int = 2
+) -> tuple[list[tuple[str, str]], str]:
+    """
+    Returns (edges, level) where level is 'folder' or 'file'.
+    Flat repos (all files at root) have no folder-level edges — fall back to files.
+    """
+    file_edges = file_import_edges(repository_id)
+    folder_edges = folder_import_edges(repository_id, depth=depth)
+    if folder_edges:
+        return folder_edges, "folder"
+    if file_edges:
+        return file_edges, "file"
+    return [], "none"
 
 
 def list_repo_dir(repository_id: int, prefix: str) -> tuple[list[str], list[str]]:

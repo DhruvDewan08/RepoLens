@@ -7,7 +7,7 @@ from app.db.session import SessionLocal
 from app.graph.architecture import (
     file_import_edges,
     file_row_by_path,
-    folder_import_edges,
+    import_edges_for_display,
     likely_entry_files,
     list_repo_dir,
 )
@@ -26,6 +26,198 @@ st.caption("Program-structure analysis: AST, call graph, hybrid retrieval.")
 
 MAX_ARCH_DRAW = 40
 MAX_FUNC_DROPDOWN = 80
+
+
+def _browse_prefix_key(key_prefix: str, repository_id: int) -> str:
+    return f"{key_prefix}_prefix_{repository_id}"
+
+
+def _browse_file_key(key_prefix: str, repository_id: int) -> str:
+    return f"{key_prefix}_file_{repository_id}"
+
+
+def render_function_picker(
+    repository_id: int,
+    function_count: int,
+    *,
+    key_prefix: str,
+    help_text: str | None = None,
+    compact: bool = False,
+) -> int | None:
+    """Pick a function: search, optional folder browse, entry-file shortcuts."""
+    if function_count == 0:
+        st.info("No functions parsed yet.")
+        return None
+
+    if help_text and not compact:
+        st.caption(help_text)
+
+    prefix_key = _browse_prefix_key(key_prefix, repository_id)
+    file_key = _browse_file_key(key_prefix, repository_id)
+    if prefix_key not in st.session_state:
+        st.session_state[prefix_key] = ""
+    if file_key not in st.session_state:
+        st.session_state[file_key] = ""
+
+    selected_func_id: int | None = None
+
+    def _browse_block() -> int | None:
+        prefix = st.session_state[prefix_key]
+        pinned_file = st.session_state[file_key]
+
+        crumbs = [("(root)", "")]
+        if prefix:
+            acc: list[str] = []
+            for part in prefix.split("/"):
+                acc.append(part)
+                crumbs.append((part, "/".join(acc)))
+        crumb_cols = st.columns(min(len(crumbs), 6))
+        for i, (label, value) in enumerate(crumbs):
+            if crumb_cols[i].button(label, key=f"{key_prefix}-crumb-{repository_id}-{i}"):
+                st.session_state[prefix_key] = value
+                st.session_state[file_key] = ""
+                st.rerun()
+
+        dirs, files_here = list_repo_dir(repository_id, prefix)
+        if dirs:
+            dir_pick = st.selectbox(
+                "Folder",
+                ["—"] + dirs,
+                key=f"{key_prefix}-dir-pick-{repository_id}",
+            )
+            if dir_pick != "—":
+                child = f"{prefix}/{dir_pick}" if prefix else dir_pick
+                if st.button("Open folder", key=f"{key_prefix}-open-dir"):
+                    st.session_state[prefix_key] = child
+                    st.session_state[file_key] = ""
+                    st.rerun()
+
+        if not files_here:
+            return None
+
+        file_index = files_here.index(pinned_file) if pinned_file in files_here else 0
+        selected_file = st.selectbox(
+            "File",
+            files_here,
+            index=file_index,
+            key=f"{key_prefix}-file-{repository_id}",
+        )
+        st.session_state[file_key] = selected_file
+
+        row = file_row_by_path(repository_id, selected_file)
+        if not row:
+            return None
+        fns = (
+            SessionLocal()
+            .query(Function)
+            .filter_by(file_id=row.id)
+            .order_by(Function.start_line)
+            .all()
+        )
+        if not fns:
+            return None
+        labels = {f"{fn.qualified_name}": fn.id for fn in fns}
+        pick = st.selectbox(
+            "Function",
+            list(labels.keys()),
+            key=f"{key_prefix}-fn-{repository_id}-{selected_file}",
+        )
+        return labels[pick]
+
+    entries = likely_entry_files(repository_id)
+    if entries:
+        label = "Quick picks" if compact else "Likely entry files"
+        st.caption(label)
+        cols = st.columns(min(len(entries), 4))
+        for i, row in enumerate(entries[:8]):
+            path = row.path.replace("\\", "/")
+            with cols[i % len(cols)]:
+                if st.button(path.split("/")[-1], key=f"{key_prefix}-entry-{row.id}", help=path):
+                    st.session_state[prefix_key] = "/".join(path.split("/")[:-1])
+                    st.session_state[file_key] = path
+                    st.rerun()
+
+    if function_count <= MAX_FUNC_DROPDOWN:
+        pairs = search_functions(repository_id, "", total_count=function_count)
+        if pairs:
+            labels = {loc_label(fn, fr): fn.id for fn, fr in pairs}
+            pick = st.selectbox(
+                "Function",
+                sorted(labels.keys()),
+                key=f"{key_prefix}-all-funcs",
+            )
+            selected_func_id = labels[pick]
+    else:
+        q = st.text_input(
+            "Find function",
+            placeholder="name, file path, or short description",
+            key=f"{key_prefix}-find",
+        )
+        if q.strip():
+            pairs = search_functions(repository_id, q, total_count=function_count)
+            if pairs:
+                labels = {loc_label(fn, fr): fn.id for fn, fr in pairs}
+                pick = st.selectbox("Matches", sorted(labels.keys()), key=f"{key_prefix}-text-pick")
+                selected_func_id = labels[pick]
+            else:
+                from app.embeddings.search import semantic_search
+
+                hits = semantic_search(q, repository_id=repository_id, top_k=8)
+                if hits:
+                    labels = {}
+                    db = SessionLocal()
+                    for fn, _dist in hits:
+                        file_row = db.get(File, fn.file_id)
+                        if file_row:
+                            path = file_row.path.replace("\\", "/")
+                            labels[f"{fn.qualified_name} ({path})"] = fn.id
+                    pick = st.selectbox("Matches", sorted(labels.keys()), key=f"{key_prefix}-sem-pick")
+                    selected_func_id = labels[pick]
+                else:
+                    st.caption("No matches.")
+
+        with st.expander("Browse folders", expanded=False):
+            browsed = _browse_block()
+            if browsed is not None:
+                selected_func_id = browsed
+
+    if not compact:
+        st.divider()
+        st.markdown("**Or search**")
+        search_col, semantic_col = st.columns(2)
+        with search_col:
+            text_q = st.text_input("Name or path", key=f"{key_prefix}-text-search")
+        with semantic_col:
+            semantic_q = st.text_input("Describe it", key=f"{key_prefix}-semantic-search")
+        if text_q:
+            pairs = search_functions(repository_id, text_q, total_count=function_count)
+            if pairs:
+                labels = {loc_label(fn, fr): fn.id for fn, fr in pairs}
+                selected_func_id = labels[
+                    st.selectbox("Text matches", sorted(labels.keys()), key=f"{key_prefix}-text-pick-full")
+                ]
+        elif semantic_q:
+            from app.embeddings.search import semantic_search
+
+            hits = semantic_search(semantic_q, repository_id=repository_id, top_k=10)
+            if hits:
+                labels = {}
+                db = SessionLocal()
+                for fn, dist in hits:
+                    file_row = db.get(File, fn.file_id)
+                    if file_row:
+                        path = file_row.path.replace("\\", "/")
+                        labels[f"{fn.qualified_name}  ({path})  d={dist:.3f}"] = fn.id
+                selected_func_id = labels[
+                    st.selectbox("Semantic matches", sorted(labels.keys()), key=f"{key_prefix}-semantic-pick-full")
+                ]
+
+        st.markdown("**Browse folders**")
+        browsed = _browse_block()
+        if browsed is not None:
+            selected_func_id = browsed
+
+    return selected_func_id
 
 
 def get_all_repositories():
@@ -167,7 +359,11 @@ with tab_chat:
     if (run_ask or run_overview) and question:
         with st.spinner("Retrieving context and generating answer…"):
             context = build_context(question, repository_id=repository_id)
-            answer = ask_llm(question, context)
+            try:
+                answer = ask_llm(question, context)
+            except RuntimeError as exc:
+                st.error(str(exc))
+                st.stop()
         st.markdown(f"Intent: `{context['intent']}`")
         st.markdown("### Answer")
         st.write(answer)
@@ -179,127 +375,100 @@ with tab_chat:
 
 with tab_impact:
     st.subheader("Impact analysis")
-    st.write(
-        "Uses resolved call-graph edges. Unresolved calls (stdlib, constructors) are omitted."
+    st.caption("Who calls this function — and what does it call? (resolved edges only)")
+
+    selected_func_id = render_function_picker(
+        repository_id,
+        function_count,
+        key_prefix="impact",
+        compact=True,
     )
 
-    if function_count == 0:
-        st.info("No functions parsed yet.")
-    else:
-        impact_q = st.text_input(
-            "Search functions",
-            placeholder="checkout  or  src/flask/app.py",
-            key="impact_search",
-        )
-        impact_pairs = search_functions(
-            repository_id, impact_q, total_count=function_count
-        )
-        if not impact_q and function_count > MAX_FUNC_DROPDOWN:
-            st.info(
-                f"{function_count} functions in this repo. Type a name or path to pick one."
+    if selected_func_id is not None:
+        st.divider()
+        ctrl1, ctrl2 = st.columns(2)
+        with ctrl1:
+            direction = st.radio(
+                "Show",
+                ["callers", "callees"],
+                horizontal=True,
+                key="impact_dir",
+                format_func=lambda x: "Who calls this" if x == "callers" else "What this calls",
             )
-        elif not impact_pairs and impact_q:
-            st.info("No matches.")
+        with ctrl2:
+            depth = st.slider("Hops", 1, 5, 3, key="impact_depth")
 
-        if not impact_pairs:
-            selected_func_id = None
-        else:
-            labels = {loc_label(fn, file_row): fn.id for fn, file_row in impact_pairs}
-            selected_name = st.selectbox("Function", sorted(labels.keys()), key="impact_func")
-            selected_func_id = labels[selected_name]
+        results = (
+            get_callers_bfs(selected_func_id, depth=depth)
+            if direction == "callers"
+            else get_callees_bfs(selected_func_id, depth=depth)
+        )
 
-        if selected_func_id is not None:
-            depth = st.slider("Depth", min_value=1, max_value=5, value=3)
-            direction = st.radio("Direction", ["callers", "callees"], horizontal=True)
-
-            col_graph, col_src = st.columns([1.2, 1])
-
-            with col_graph:
-                if st.button("Analyze"):
-                    st.session_state["impact_target"] = selected_func_id
-                    st.session_state["impact_direction"] = direction
-                    results = (
-                        get_callers_bfs(selected_func_id, depth=depth)
-                        if direction == "callers"
-                        else get_callees_bfs(selected_func_id, depth=depth)
-                    )
-                    st.session_state["impact_results"] = [
-                        (fn.id, hop) for fn, hop in results
-                    ]
-                    st.session_state["inspect_id"] = selected_func_id
-
-                target_id = st.session_state.get("impact_target")
-                stored = st.session_state.get("impact_results")
-                stored_dir = st.session_state.get("impact_direction", direction)
-
-                if target_id and stored is not None:
-                    extra_ids = [target_id] + [fid for fid, _hop in stored]
-                    func_by_id = load_functions_by_ids(extra_ids)
-                    target_fn, target_file = func_by_id.get(target_id, (None, None))
-                    if target_fn is None:
-                        st.warning("Selected function is not in this repository.")
-                    elif not stored:
-                        st.info("No related functions on resolved edges.")
+        col_graph, col_src = st.columns([1.1, 1])
+        with col_graph:
+            if not results:
+                st.info("No resolved links at this depth.")
+            else:
+                extra_ids = [selected_func_id] + [fn.id for fn, _hop in results]
+                func_by_id = load_functions_by_ids(extra_ids)
+                target_fn, target_file = func_by_id[selected_func_id]
+                dot = graphviz.Digraph()
+                dot.attr(rankdir="TB")
+                tpath = target_file.path.replace("\\", "/")
+                dot.node(
+                    str(selected_func_id),
+                    label=f"{target_fn.qualified_name}\\n{tpath}:{target_fn.start_line}",
+                    style="filled",
+                    fillcolor="lightblue",
+                )
+                for fn, hop in results:
+                    fid = fn.id
+                    _, file_row = func_by_id[fid]
+                    path = file_row.path.replace("\\", "/")
+                    dot.node(str(fid), label=f"{fn.qualified_name}\\n{path}:{fn.start_line}")
+                    if direction == "callers":
+                        dot.edge(str(fid), str(selected_func_id), label=f"{hop}")
                     else:
-                        dot = graphviz.Digraph()
-                        dot.attr(rankdir="TB")
-                        tpath = target_file.path.replace("\\", "/")
-                        dot.node(
-                            str(target_id),
-                            label=f"{target_fn.qualified_name}\\n{tpath}:{target_fn.start_line}",
-                            style="filled",
-                            fillcolor="lightblue",
-                        )
-                        for fid, hop in stored:
-                            fn, file_row = func_by_id[fid]
-                            path = file_row.path.replace("\\", "/")
-                            dot.node(
-                                str(fid),
-                                label=f"{fn.qualified_name}\\n{path}:{fn.start_line}",
-                            )
-                            if stored_dir == "callers":
-                                dot.edge(str(fid), str(target_id), label=f"d{hop}")
-                            else:
-                                dot.edge(str(target_id), str(fid), label=f"d{hop}")
-                        st.graphviz_chart(dot)
+                        dot.edge(str(selected_func_id), str(fid), label=f"{hop}")
+                st.graphviz_chart(dot)
 
-                        st.markdown("**Neighborhood** (select one to open source)")
-                        options = {
-                            loc_label(func_by_id[fid][0], func_by_id[fid][1])
-                            + f"  depth {hop}": fid
-                            for fid, hop in sorted(stored, key=lambda r: r[1])
-                        }
-                        inspect_label = st.selectbox(
-                            "Open in inspector",
-                            ["(target function)"] + list(options.keys()),
-                        )
-                        if inspect_label == "(target function)":
-                            st.session_state["inspect_id"] = target_id
-                        else:
-                            st.session_state["inspect_id"] = options[inspect_label]
+                with st.expander(f"{len(results)} related functions"):
+                    for fn, hop in sorted(results, key=lambda r: r[1]):
+                        st.write(f"- `{fn.qualified_name}` (hop {hop})")
 
-            with col_src:
-                st.markdown("**Source**")
-                inspect_id = st.session_state.get("inspect_id", selected_func_id)
-                render_inspector(inspect_id, repository_id)
+        with col_src:
+            render_inspector(selected_func_id, repository_id)
 
 with tab_arch:
     st.subheader("Architecture map")
     st.write(
-        "**Folders** is the overview (no names required). "
-        "**Files** is a zoom-in after you pick a path."
+        "**Folders** groups imports by directory. **Files** shows individual file links "
+        "(use a path filter on large repos like Flask)."
     )
     view = st.radio("View", ["Folders (overview)", "Files (zoom in)"], horizontal=True)
 
     if view.startswith("Folders"):
-        depth = st.slider("Folder depth", 1, 3, 2)
-        edges = folder_import_edges(repository_id, depth=depth)
+        depth = st.slider("Folder depth", 1, 3, 2, key="arch_folder_depth")
+        edges, level = import_edges_for_display(repository_id, depth=depth)
         nodes = sorted({p for e in edges for p in e})
-        st.caption(f"{len(nodes)} folders, {len(edges)} import links between folders")
+        if level == "folder":
+            st.caption(f"{len(nodes)} folders, {len(edges)} import links between folders")
+        elif level == "file":
+            st.caption(
+                f"{len(nodes)} files, {len(edges)} import links — "
+                "flat layout (all files at repo root), showing file-level graph"
+            )
+        else:
+            st.caption("0 resolved import links")
+
         if not edges:
-            st.info("Not enough resolved imports to build a folder map.")
+            st.info(
+                "No file-to-file imports could be resolved. "
+                "Only `from x import y` where `y` maps to another file in this repo counts. "
+                "Stdlib and third-party imports are ignored."
+            )
         elif len(nodes) > MAX_ARCH_DRAW:
-            st.warning("Still too wide — lower folder depth.")
+            st.warning("Too wide — switch to **Files** and add a path filter (e.g. `src/flask`).")
             for src, dst in edges[:40]:
                 st.write(f"- `{src}` → `{dst}`")
         else:
@@ -310,19 +479,23 @@ with tab_arch:
             for src, dst in edges:
                 dot.edge(src, dst)
             st.graphviz_chart(dot)
-            st.write("Open **Functions** and click a folder name from this map to drill in.")
     else:
-        st.write("Optional path filter, then Draw. Leave empty only for small repos.")
+        file_edges = file_import_edges(repository_id)
+        st.caption(f"{len(file_edges)} resolved file-to-file import edges in this repo")
         arch_q = st.text_input(
             "Path contains",
             placeholder="e.g. src/flask   or   checkout",
             key="arch_filter",
         )
         hide_tests = st.checkbox("Hide tests / docs / examples", value=True, key="arch_hide")
-        draw = st.button("Draw file graph", key="arch_draw")
+        auto_small = file_count <= 15 and not arch_q
+        draw = st.button("Draw file graph", key="arch_draw") or auto_small
 
         if not draw:
-            st.info("Click Draw file graph when you have a filter (Flask: `src/flask`).")
+            st.info(
+                "Click **Draw file graph**, or type a filter. "
+                "Flask: try `src/flask` with tests/examples hidden."
+            )
         else:
             edges = file_import_edges(repository_id)
 
@@ -363,86 +536,16 @@ with tab_arch:
                     st.graphviz_chart(dot)
 
 with tab_browse:
-    st.subheader("Browse the tree")
-    st.write("Start at the repo root and click folders — no need to know function names.")
+    st.subheader("Functions")
+    st.caption("Browse or search, then read the source below.")
 
-    prefix_key = f"browse_prefix_{repository_id}"
-    if prefix_key not in st.session_state:
-        st.session_state[prefix_key] = ""
-    prefix = st.session_state[prefix_key]
-
-    crumbs = [("(root)", "")]
-    if prefix:
-        parts = prefix.split("/")
-        acc = []
-        for part in parts:
-            acc.append(part)
-            crumbs.append((part, "/".join(acc)))
-    crumb_cols = st.columns(len(crumbs))
-    for i, (label, value) in enumerate(crumbs):
-        if crumb_cols[i].button(label, key=f"crumb-{repository_id}-{i}"):
-            st.session_state[prefix_key] = value
-            st.rerun()
-
-    dirs, files_here = list_repo_dir(repository_id, prefix)
-    col_d, col_f = st.columns(2)
-    with col_d:
-        st.markdown("**Folders**")
-        if not dirs:
-            st.caption("None")
-        for name in dirs:
-            child = f"{prefix}/{name}" if prefix else name
-            if st.button(f"📁 {name}", key=f"dir-{repository_id}-{child}"):
-                st.session_state[prefix_key] = child
-                st.rerun()
-    with col_f:
-        st.markdown("**Files**")
-        if not files_here:
-            st.caption("None in this folder")
-        else:
-            pick_file = st.selectbox("File", files_here, key="browse_file")
-            row = file_row_by_path(repository_id, pick_file)
-            if row:
-                fns = (
-                    SessionLocal()
-                    .query(Function)
-                    .filter_by(file_id=row.id)
-                    .order_by(Function.start_line)
-                    .all()
-                )
-                st.caption(f"{len(fns)} functions in `{pick_file}`")
-                if fns:
-                    labels = {
-                        f"{fn.qualified_name}  L{fn.start_line}–{fn.end_line}": fn.id
-                        for fn in fns
-                    }
-                    pick = st.selectbox("Function in file", list(labels.keys()), key="browse_fn")
-                    render_inspector(labels[pick], repository_id)
-
-    st.divider()
-    st.markdown("**Likely entry files** (app.py / main.py / __init__.py)")
-    entries = likely_entry_files(repository_id)
-    if not entries:
-        st.caption("None detected.")
-    else:
-        for row in entries:
-            path = row.path.replace("\\", "/")
-            if st.button(path, key=f"entry-{row.id}"):
-                parent = "/".join(path.split("/")[:-1])
-                st.session_state[prefix_key] = parent
-                st.rerun()
-
-    st.divider()
-    st.markdown("**Or search if you already have a name**")
-    browse_q = st.text_input("Name or path", placeholder="optional", key="browse_search")
-    if browse_q:
-        browse_pairs = search_functions(
-            repository_id, browse_q, total_count=function_count
-        )
-        if not browse_pairs:
-            st.info("No matches.")
-        else:
-            labels = {loc_label(fn, file_row): fn.id for fn, file_row in browse_pairs}
-            pick = st.selectbox("Match", sorted(labels.keys()), key="browse_func")
-            render_inspector(labels[pick], repository_id)
+    picked_id = render_function_picker(
+        repository_id,
+        function_count,
+        key_prefix="browse",
+        compact=True,
+    )
+    if picked_id is not None:
+        st.divider()
+        render_inspector(picked_id, repository_id)
 

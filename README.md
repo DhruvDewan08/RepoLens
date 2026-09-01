@@ -47,7 +47,7 @@ GitHub URL or local folder
   → AST: functions, imports, calls
   → resolve call edges to function IDs
   → embed each function (path, name, docstring, snippet)
-  → route intent: semantic | impact | both
+  → route intent: semantic | impact | flow
   → LLM answers from graph + retrieved functions
 ```
 
@@ -168,7 +168,7 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/repolens
 
 LLM selection in `app/query/llm_client.py`:
 
-1. If `GROQ_API_KEY` is set → Groq OpenAI-compatible API. Default model: `llama-3.1-8b-instant` (override with `LLM_MODEL`).
+1. If `GROQ_API_KEY` is set → Groq OpenAI-compatible API. Default model: `openai/gpt-oss-20b` (override with `LLM_MODEL`).
 2. Else if `OPENAI_API_KEY` is set → OpenAI (or `OPENAI_BASE_URL`). Default model: `gpt-4o-mini`.
 3. Else → local Ollama. Default model: `llama3.2`.
 
